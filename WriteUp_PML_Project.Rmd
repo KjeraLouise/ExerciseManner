@@ -1,0 +1,144 @@
+---
+title: "Exercise Manner"
+author: "Kjera Seregi"
+date: "May 30, 2016"
+output: html_document
+---
+
+## Introduction
+
+The goal of this project is to predict how, or the manner in which, participants in this study performed their exercises.  Their are five exercise forms, one is correct, and the other four forms place the body out of alignment in some way. Using a given training data set of over 19000 records, broken into its own training and test data sets, a few models are tested until high accuracy is achieved.  This model is then used to predict the 20 given test records for their exercise classe (form). More information on the data set can be found here: http://groupware.les.inf.puc-rio.br/har#dataset.
+
+
+## Retrieve the training and test data sets.
+
+```{r, cache=TRUE}
+InitialTrainData <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", na.strings = c("", " ", "NA"))
+
+InitialTestData <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", na.strings = c("", " ", "NA"))
+
+```
+
+
+```{r}
+dim(InitialTrainData)
+```
+
+```{r, results='hide'}
+# not printing results to save space
+summary(InitialTrainData)
+```
+
+## Cleaning the data
+
+There are numerous NAs in the dataset (summary results not printed above to save space, but summarized here). Of 19622 records, 19216 have many NAs, values that aren't useful. Including too many variables can encourage a model to fit to random noise, and having more records to evaluate is often considered more valuable than more variables (if having to tradeoff).  Therefore, I will eliminate the columns with NAs and keep all the records in the dataset.  I'll also clean the given test set in the same way.
+
+```{r}
+DataRmvNAs <- InitialTrainData[, colSums(is.na(InitialTrainData))==0]
+TestRmvNAs <- InitialTestData[, colSums(is.na(InitialTrainData))==0]
+```
+
+
+
+Add a variable to describe what each letter in "classe" stands for.
+```{r}
+DataRmvNAs$classe_f = factor(DataRmvNAs$classe, labels=c("Correct", "ElbowF", "LiftHalf", "LowerHalf", "HipsF"))
+
+```
+
+Make the variable for "Classe" with just a descriptive label (i.e. keep "classe_f" variable and remove "Classe" variable).
+```{r}
+DataForAnalysis <- DataRmvNAs[,-60] 
+```
+
+
+## Prepare training and testing data sets for cross validation and out of sample error estimates.
+```{r}
+library(caret)
+set.seed(100)
+inTrain <- createDataPartition(y=DataForAnalysis$classe_f, p=.8, list=F)
+training <- DataForAnalysis[inTrain,]
+testing <- DataForAnalysis[-inTrain,]
+dim(training)
+```
+
+## Running Models
+Run a model with "rpart", one of the R packages for regression and classification trees.
+```{r}
+library(caret)
+set.seed(101)
+modFitProj <- train(classe_f~., method="rpart", data=training)
+modFitProj
+```
+
+Model used the unique identifier, "X", to predict, but since the Xs are grouped according to classe, this unique identifier must be removed.  In other words it is highly correlated with the dependent variable, but this is due to "data entry" and not to an actual relationship in the data.  See in the plot below how the variable "X" is used to predict classe.
+
+```{r}
+plot(modFitProj$finalModel, uniform = T, main = "Classification Tree")
+text(modFitProj$finalModel, use.n=T, all=T, cex=.6)
+```
+
+When removing the "X" variable, also simplify the data set by removing other individual identiers and time stamps (found at the beginning of the data set - first 7 columns), in order to limit the data set to just variables that may be relevant.
+
+```{r}
+SmallData <- DataForAnalysis[,8:60]
+SmallTestData <- TestRmvNAs[,8:60]
+
+#Rebuild training and test from SmallData data set
+
+set.seed(100)
+sinTrain <- createDataPartition(y=SmallData$classe_f, p=.8, list=F)
+straining <- SmallData[inTrain,]
+stesting <- SmallData[-inTrain,]
+dim(straining)
+
+```
+
+Rerun model with revised data set.
+```{r}
+set.seed(101)
+modSmallFitProj <- train(classe_f~., method="rpart", data=straining)
+modSmallFitProj
+```
+
+Accuracy with "rpart" model (modSmallFitProj) was 51%.  The test data set will be even worse, so I'll just try another method.
+
+I'll try bagging ("bootstrap aggregating") with the "treebag" option in caret. The  results of computing the model will be hidden, because they get very long.
+```{r, results="hide", cache=TRUE, warning=FALSE, message=FALSE}
+set.seed(102)
+modTBFitProj <- train(classe_f~., method="treebag", data=straining)
+```
+
+```{r}
+modTBFitProj
+```
+The bagging model (modTBFitProj) option was much better, with 98% Accuracy. 
+
+
+## Find out of sample error rate on best model.
+For an estimate of the out-of-sample error rate,  I will test with the stesting data set:
+```{r}
+predictions <- predict(modTBFitProj, newdata = stesting)
+confusionMatrix(predictions, stesting$classe_f)
+```
+
+
+The out of sample accuracy was almost the same as the in-sample accuracy(although, for some strange reason it was slightly higher).  So, the out of sample error rate is estimated at 1.8%
+
+
+## Conclusion: 
+# Predict the exercise manner, or "classe_f" of the records from the given test data set.
+```{r}
+predict(modTBFitProj, newdata = SmallTestData)
+```
+
+
+##References
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.  
+
+http://groupware.les.inf.puc-rio.br/har#dataset
+http://stackoverflow.com/questions/24172111/change-the-blank-cells-to-na
+http://stackoverflow.com/questions/12454487/remove-columns-from-dataframe-where-some-of-values-are-na
+http://www.ats.ucla.edu/stat/r/library/contrast_coding.htm
+
+
